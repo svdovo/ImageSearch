@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片素材库 - 以图搜图与去重系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        .slide-enter-active, .slide-leave-active { transition: all 0.3s ease; }
+        .slide-enter-from { transform: translateX(20px); opacity: 0; }
+        .slide-leave-to { transform: translateX(-20px); opacity: 0; }
+        .img-card { transition: all 0.2s ease; }
+        .img-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
+        .similarity-bar { background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e); }
+        .drop-zone { border: 2px dashed #d1d5db; transition: all 0.3s ease; }
+        .drop-zone.dragover { border-color: #6366f1; background: #eef2ff; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+        .nav-item { position: relative; }
+        .nav-item.active::after {
+            content: ''; position: absolute; bottom: -2px; left: 0; right: 0;
+            height: 2px; background: #6366f1; border-radius: 1px;
+        }
+        .group-badge { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<div id="app">
+    <!-- 顶部导航 -->
+    <nav class="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <h1 class="text-lg font-semibold text-gray-800">图片素材库</h1>
+                    <span class="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">以图搜图与去重</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <button v-for="tab in tabs" :key="tab.id"
+                        @click="currentTab = tab.id"
+                        :class="['nav-item px-4 py-2 text-sm font-medium rounded-lg transition-colors',
+                            currentTab === tab.id ? 'text-indigo-600 bg-indigo-50 active' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50']">
+                        {{ tab.icon }} {{ tab.label }}
+                    </button>
+                </div>
+                <div class="flex items-center gap-3 text-sm text-gray-500">
+                    <span class="bg-gray-100 px-3 py-1 rounded-full">
+                        共 {{ stats.total_images }} 张
+                    </span>
+                    <span v-if="stats.total_groups > 0" class="bg-amber-100 text-amber-700 px-3 py-1 rounded-full">
+                        {{ stats.total_groups }} 个重复组
+                    </span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        <!-- ========== 素材库浏览 (功能10) ========== -->
+        <div v-if="currentTab === 'library'">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-bold text-gray-800">素材库浏览</h2>
+                <div class="flex items-center gap-3">
+                    <div class="relative">
+                        <input v-model="libraryKeyword" @input="loadLibrary(1)" type="text"
+                            placeholder="搜索文件名..."
+                            class="pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent w-64">
+                        <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </div>
+                    <button @click="showExportModal = true" :disabled="selectedImages.size === 0"
+                        :class="['px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                            selectedImages.size > 0 ? 'bg-indigo-500 text-white hover:bg-indigo-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed']">
+                        导出选中 ({{ selectedImages.size }})
+                    </button>
+                    <button @click="selectAllVisible" class="px-3 py-2 text-sm text-gray-600 hover:text-indigo-600">
+                        {{ allSelected ? '取消全选' : '全选' }}
+                    </button>
+                </div>
+            </div>
+
+            <!-- 图片网格 -->
+            <div v-if="libraryImages.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                <div v-for="img in libraryImages" :key="img.id"
+                    @click="toggleSelect(img.id)"
+                    :class="['img-card relative rounded-xl overflow-hidden cursor-pointer border-2',
+                        selectedImages.has(img.id) ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-transparent']">
+                    <img :src="img.url" :alt="img.filename" class="w-full h-40 object-cover" loading="lazy">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 hover:opacity-100 transition-opacity">
+                        <div class="absolute bottom-0 left-0 right-0 p-2">
+                            <p class="text-white text-xs truncate">{{ img.filename }}</p>
+                            <p class="text-gray-300 text-xs">{{ img.width }}x{{ img.height }}</p>
+                        </div>
+                    </div>
+                    <div v-if="selectedImages.has(img.id)" class="absolute top-2 right-2 w-6 h-6 bg-indigo-500 rounded-full flex items-center justify-center">
+                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            <div v-else class="text-center py-20 text-gray-400">
+                <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                <p class="text-lg">素材库为空</p>
+                <p class="text-sm mt-1">请上传图片或导入文件夹开始使用</p>
+            </div>
+
+            <!-- 分页 -->
+            <div v-if="libraryTotalPages > 1" class="flex justify-center mt-6 gap-2">
+                <button v-for="p in libraryTotalPages" :key="p" @click="loadLibrary(p)"
+                    :class="['px-3 py-1.5 rounded-lg text-sm', p === libraryPage ? 'bg-indigo-500 text-white' : 'bg-white text-gray-600 border hover:bg-gray-50']">
+                    {{ p }}
+                </button>
+            </div>
+        </div>
+
+        <!-- ========== 上传与导入 (功能1/5) ========== -->
+        <div v-if="currentTab === 'upload'">
+            <h2 class="text-xl font-bold text-gray-800 mb-6">上传与导入</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- 单张/批量上传 -->
+                <div class="bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                        <span class="w-6 h-6 bg-blue-100 text-blue-600 rounded flex items-center justify-center text-xs font-bold">1</span>
+                        上传图片
+                    </h3>
+                    <div class="drop-zone rounded-xl p-8 text-center cursor-pointer"
+                        :class="{ dragover: uploadDragOver }"
+                        @dragover.prevent="uploadDragOver = true"
+                        @dragleave.prevent="uploadDragOver = false"
+                        @drop.prevent="handleDrop"
+                        @click="$refs.fileInput.click()">
+                        <input ref="fileInput" type="file" multiple accept="image/*" class="hidden" @change="handleFileSelect">
+                        <svg class="w-12 h-12 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        </svg>
+                        <p class="text-gray-600 font-medium">点击或拖拽图片到此处</p>
+                        <p class="text-gray-400 text-sm mt-1">支持 JPG, PNG, BMP, WebP, GIF, TIFF</p>
+                        <p class="text-gray-400 text-sm">可一次选择多张图片批量上传</p>
+                    </div>
+                    <div v-if="uploadResults.length > 0" class="mt-4 space-y-2">
+                        <div v-for="(r, i) in uploadResults" :key="i"
+                            :class="['flex items-center gap-2 p-2 rounded-lg text-sm',
+                                r.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700']">
+                            <span>{{ r.success ? '✓' : '' }}</span>
+                            <span class="truncate">{{ r.filename || r.message }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 文件夹导入 -->
+                <div class="bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                        <span class="w-6 h-6 bg-green-100 text-green-600 rounded flex items-center justify-center text-xs font-bold">2</span>
+                        文件夹导入
+                    </h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">输入图片文件夹路径</label>
+                            <input v-model="importFolderPath" type="text" placeholder="例如: D:\Pictures\素材"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                        </div>
+                        <button @click="importFolder" :disabled="importing || !importFolderPath"
+                            :class="['w-full py-2.5 rounded-lg text-sm font-medium transition-colors',
+                                importing ? 'bg-gray-200 text-gray-400' : 'bg-green-500 text-white hover:bg-green-600']">
+                            {{ importing ? '导入中...' : '开始导入' }}
+                        </button>
+                        <div v-if="importResult" class="p-3 bg-gray-50 rounded-lg text-sm">
+                            <p>总计: {{ importResult.total }} 张</p>
+                            <p class="text-green-600">成功: {{ importResult.success }} 张</p>
+                            <p v-if="importResult.skipped > 0" class="text-amber-600">跳过(重复): {{ importResult.skipped }} 张</p>
+                            <p v-if="importResult.failed > 0" class="text-red-600">失败: {{ importResult.failed }} 张</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 上传进度 -->
+            <div v-if="uploading" class="mt-6 bg-white rounded-xl shadow-sm border p-6">
+                <div class="flex items-center gap-3">
+                    <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span class="text-sm text-gray-600">正在处理图片并构建向量索引...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 以图搜图 (功能1) ========== -->
+        <div v-if="currentTab === 'search'">
+            <h2 class="text-xl font-bold text-gray-800 mb-6">以图搜图 / 以文搜图</h2>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 搜索输入 -->
+                <div class="bg-white rounded-xl shadow-sm border p-6">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">搜索方式</label>
+                            <div class="flex gap-2">
+                                <button @click="searchMode = 'image'"
+                                    :class="['flex-1 py-2 rounded-lg text-sm font-medium', searchMode === 'image' ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-600']">
+                                    以图搜图
+                                </button>
+                                <button @click="searchMode = 'text'"
+                                    :class="['flex-1 py-2 rounded-lg text-sm font-medium', searchMode === 'text' ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-600']">
+                                    以文搜图
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-if="searchMode === 'image'">
+                            <div class="drop-zone rounded-xl p-6 text-center cursor-pointer"
+                                :class="{ dragover: searchDragOver }"
+                                @dragover.prevent="searchDragOver = true"
+                                @dragleave.prevent="searchDragOver = false"
+                                @drop.prevent="handleSearchDrop"
+                                @click="$refs.searchFileInput.click()">
+                                <input ref="searchFileInput" type="file" accept="image/*" class="hidden" @change="handleSearchFileSelect">
+                                <img v-if="searchPreview" :src="searchPreview" class="max-h-40 mx-auto rounded-lg mb-2">
+                                <svg v-else class="w-10 h-10 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                                </svg>
+                                <p class="text-sm text-gray-500">{{ searchPreview ? '点击更换图片' : '点击或拖拽搜索图片' }}</p>
+                            </div>
+                        </div>
+
+                        <div v-else>
+                            <textarea v-model="searchText" rows="3" placeholder="输入中文描述，如：一只在草地上奔跑的金毛犬"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">相似度阈值: {{ searchThreshold }}</label>
+                            <input v-model.number="searchThreshold" type="range" min="0.5" max="0.99" step="0.01"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-xs text-gray-400">
+                                <span>0.50 (宽松)</span><span>0.99 (严格)</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">返回数量</label>
+                            <input v-model.number="searchTopK" type="number" min="1" max="100"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm">
+                        </div>
+
+                        <button @click="executeSearch" :disabled="searching"
+                            :class="['w-full py-2.5 rounded-lg text-sm font-medium transition-colors',
+                                searching ? 'bg-gray-200 text-gray-400' : 'bg-indigo-500 text-white hover:bg-indigo-600']">
+                            {{ searching ? '搜索中...' : '开始搜索' }}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 搜索结果 -->
+                <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="font-semibold text-gray-700 mb-4">
+                        搜索结果
+                        <span v-if="searchResults.length > 0" class="text-sm font-normal text-gray-400 ml-2">
+                            共 {{ searchResults.length }} 条
+                        </span>
+                    </h3>
+                    <div v-if="searchResults.length > 0" class="space-y-3">
+                        <div v-for="(r, i) in searchResults" :key="r.image_id"
+                            class="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                            <span class="text-sm font-bold text-gray-400 w-6">{{ i + 1 }}</span>
+                            <img :src="r.filepath ? '/images/' + getFilename(r.filepath) : ''" class="w-16 h-16 rounded-lg object-cover flex-shrink-0">
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-medium text-gray-800 truncate">{{ r.filename }}</p>
+                                <p class="text-xs text-gray-400">{{ r.width }}x{{ r.height }} · {{ formatSize(r.file_size) }}</p>
+                                <div v-if="r.phash_distance !== undefined" class="flex items-center gap-2 mt-1">
+                                    <span class="text-xs px-1.5 py-0.5 rounded"
+                                        :class="r.phash_distance < 5 ? 'bg-green-100 text-green-700' : r.phash_distance < 10 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'">
+                                        哈希距离: {{ r.phash_distance }}
+                                    </span>
+                                    <span v-if="r.is_near_duplicate" class="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded">近重复</span>
+                                </div>
+                            </div>
+                            <div class="text-right flex-shrink-0">
+                                <div class="text-lg font-bold" :class="getSimilarityColor(r.similarity)">
+                                    {{ (r.similarity * 100).toFixed(1) }}%
+                                </div>
+                                <div class="w-20 h-1.5 bg-gray-200 rounded-full mt-1">
+                                    <div class="h-full rounded-full similarity-bar" :style="{ width: (r.similarity * 100) + '%' }"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="text-center py-16 text-gray-400">
+                        <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        <p>上传搜索图片或输入文字开始搜索</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 阈值调节 (功能6) ========== -->
+        <div v-if="currentTab === 'threshold'">
+            <h2 class="text-xl font-bold text-gray-800 mb-6">阈值调节与效果对比</h2>
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div class="bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="font-semibold text-gray-700 mb-4">查询图片</h3>
+                    <div class="drop-zone rounded-xl p-6 text-center cursor-pointer mb-4"
+                        @click="$refs.thresholdFileInput.click()">
+                        <input ref="thresholdFileInput" type="file" accept="image/*" class="hidden" @change="handleThresholdFileSelect">
+                        <img v-if="thresholdPreview" :src="thresholdPreview" class="max-h-32 mx-auto rounded-lg">
+                        <svg v-else class="w-10 h-10 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/>
+                        </svg>
+                        <p class="text-sm text-gray-500">选择查询图片</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-2">阈值列表 (逗号分隔)</label>
+                        <input v-model="thresholdList" type="text"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                    </div>
+                    <button @click="runThresholdCompare" :disabled="thresholdComparing || !thresholdPreview"
+                        :class="['w-full mt-4 py-2.5 rounded-lg text-sm font-medium',
+                            thresholdComparing ? 'bg-gray-200 text-gray-400' : 'bg-amber-500 text-white hover:bg-amber-600']">
+                        {{ thresholdComparing ? '对比中...' : '开始对比' }}
+                    </button>
+                </div>
+
+                <div class="lg:col-span-3 space-y-4">
+                    <div v-for="comp in thresholdComparisons" :key="comp.threshold" class="bg-white rounded-xl shadow-sm border p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-semibold text-gray-700">
+                                阈值 = {{ comp.threshold.toFixed(2) }}
+                                <span class="text-sm font-normal text-gray-400 ml-2">({{ comp.result_count }} 条结果)</span>
+                            </h4>
+                            <div class="flex gap-1">
+                                <span v-for="n in 5" :key="n"
+                                    :class="['w-2 h-2 rounded-full', n <= Math.ceil(comp.threshold * 5) ? 'bg-amber-400' : 'bg-gray-200']"></span>
+                            </div>
+                        </div>
+                        <div v-if="comp.results.length > 0" class="flex gap-3 overflow-x-auto pb-2">
+                            <div v-for="r in comp.results" :key="r.image_id" class="flex-shrink-0 w-28">
+                                <img :src="'/images/' + getFilename(r.filepath)" class="w-28 h-28 rounded-lg object-cover">
+                                <p class="text-xs text-gray-500 mt-1 truncate">{{ r.filename }}</p>
+                                <p class="text-xs font-medium" :class="getSimilarityColor(r.similarity)">
+                                    {{ (r.similarity * 100).toFixed(1) }}%
+                                </p>
+                            </div>
+                        </div>
+                        <p v-else class="text-sm text-gray-400 text-center py-4">无结果</p>
+                    </div>
+                    <div v-if="thresholdComparisons.length === 0" class="text-center py-16 text-gray-400 bg-white rounded-xl border">
+                        <p>选择图片并点击"开始对比"查看不同阈值下的搜索结果</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 重复组管理 (功能7) ========== -->
+        <div v-if="currentTab === 'duplicates'">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-bold text-gray-800">重复组管理</h2>
+                <div class="flex gap-3">
+                    <button @click="detectDuplicates" :disabled="detecting"
+                        :class="['px-4 py-2 rounded-lg text-sm font-medium',
+                            detecting ? 'bg-gray-200 text-gray-400' : 'bg-amber-500 text-white hover:bg-amber-600']">
+                        {{ detecting ? '检测中...' : '检测重复' }}
+                    </button>
+                    <button @click="batchAutoClean" :disabled="groups.length === 0 || cleaning"
+                        :class="['px-4 py-2 rounded-lg text-sm font-medium',
+                            cleaning ? 'bg-gray-200 text-gray-400' : 'bg-red-500 text-white hover:bg-red-600']">
+                        {{ cleaning ? '清理中...' : '批量自动清理' }}
+                    </button>
+                </div>
+            </div>
+
+            <div v-if="groups.length > 0" class="space-y-4">
+                <div v-for="group in groups" :key="group.id" class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                    <div class="p-4 border-b bg-gray-50 flex items-center justify-between">
+                        <div>
+                            <span class="font-semibold text-gray-700">{{ group.group_name || '重复组' }}</span>
+                            <span class="text-sm text-gray-400 ml-2">{{ group.member_count }} 张图片</span>
+                            <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full ml-2">阈值 {{ group.threshold }}</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="autoCleanGroup(group.id)" class="px-3 py-1 text-xs bg-green-100 text-green-700 rounded-lg hover:bg-green-200">
+                                自动清理
+                            </button>
+                            <button @click="deleteGroup(group.id)" class="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200">
+                                删除组
+                            </button>
+                        </div>
+                    </div>
+                    <div class="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                        <div v-for="member in group.members" :key="member.image_id"
+                            :class="['relative rounded-lg overflow-hidden border-2 transition-colors',
+                                member.image_id === group.representative_id ? 'border-green-500' : 'border-gray-200']">
+                            <img :src="'/images/' + getFilename(member.filepath)" class="w-full h-24 object-cover">
+                            <div class="p-1.5">
+                                <p class="text-xs truncate text-gray-600">{{ member.filename }}</p>
+                                <div class="flex items-center justify-between mt-0.5">
+                                    <span class="text-xs font-medium" :class="member.similarity >= 0.95 ? 'text-red-500' : 'text-amber-500'">
+                                        {{ (member.similarity * 100).toFixed(0) }}%
+                                    </span>
+                                    <span class="text-xs text-gray-400">{{ member.width }}x{{ member.height }}</span>
+                                </div>
+                            </div>
+                            <div v-if="member.image_id === group.representative_id"
+                                class="absolute top-1 left-1 bg-green-500 text-white text-xs px-1.5 py-0.5 rounded">
+                                推荐保留
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div v-else class="text-center py-20 text-gray-400 bg-white rounded-xl border">
+                <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                <p class="text-lg">暂无重复组</p>
+                <p class="text-sm mt-1">点击"检测重复"按钮扫描素材库中的重复图片</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- 导出弹窗 -->
+    <div v-if="showExportModal" class="fixed inset-0 modal-overlay z-50 flex items-center justify-center" @click.self="showExportModal = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-96 max-w-full mx-4">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">导出选中图片</h3>
+            <p class="text-sm text-gray-500 mb-4">已选择 {{ selectedImages.size }} 张图片</p>
+            <div class="flex gap-3">
+                <button @click="exportZip" class="flex-1 py-2.5 bg-indigo-500 text-white rounded-lg text-sm font-medium hover:bg-indigo-600">
+                    导出 ZIP
+                </button>
+                <button @click="exportManifest" class="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200">
+                    导出清单
+                </button>
+            </div>
+            <button @click="showExportModal = false" class="w-full mt-3 py-2 text-sm text-gray-500 hover:text-gray-700">
+                取消
+            </button>
+        </div>
+    </div>
+
+    <!-- 通知 -->
+    <div class="fixed bottom-6 right-6 z-50 space-y-2">
+        <transition-group name="slide">
+            <div v-for="toast in toasts" :key="toast.id"
+                :class="['px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-sm',
+                    toast.type === 'success' ? 'bg-green-500 text-white' :
+                    toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-gray-700 text-white']">
+                {{ toast.message }}
+            </div>
+        </transition-group>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted } = Vue;
+
+createApp({
+    setup() {
+        const API = '';
+        const currentTab = ref('library');
+        const tabs = [
+            { id: 'library', label: '素材库', icon: '🖼️' },
+            { id: 'upload', label: '上传导入', icon: '📤' },
+            { id: 'search', label: '搜索', icon: '🔍' },
+            { id: 'threshold', label: '阈值对比', icon: '📊' },
+            { id: 'duplicates', label: '重复管理', icon: '🔄' },
+        ];
+
+        const stats = reactive({ total_images: 0, total_groups: 0, total_size_mb: 0, index_count: 0 });
+        const toasts = ref([]);
+
+        function toast(message, type = 'success') {
+            const id = Date.now();
+            toasts.value.push({ id, message, type });
+            setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id); }, 3000);
+        }
+
+        // ===== 素材库 =====
+        const libraryImages = ref([]);
+        const libraryPage = ref(1);
+        const libraryTotalPages = ref(1);
+        const libraryKeyword = ref('');
+        const selectedImages = ref(new Set());
+        const allSelected = computed(() => libraryImages.value.length > 0 && libraryImages.value.every(img => selectedImages.value.has(img.id)));
+
+        async function loadLibrary(page = 1) {
+            libraryPage.value = page;
+            try {
+                const params = new URLSearchParams({ page, page_size: 50, keyword: libraryKeyword.value });
+                const res = await fetch(`${API}/api/library?${params}`);
+                const data = await res.json();
+                libraryImages.value = data.images;
+                libraryTotalPages.value = data.total_pages;
+            } catch (e) { toast('加载素材库失败', 'error'); }
+        }
+
+        function toggleSelect(id) {
+            if (selectedImages.value.has(id)) selectedImages.value.delete(id);
+            else selectedImages.value.add(id);
+        }
+        function selectAllVisible() {
+            if (allSelected.value) selectedImages.value.clear();
+            else libraryImages.value.forEach(img => selectedImages.value.add(img.id));
+        }
+
+        // ===== 上传 =====
+        const uploadDragOver = ref(false);
+        const uploading = ref(false);
+        const uploadResults = ref([]);
+
+        async function handleFileSelect(e) { await uploadFiles(e.target.files); }
+        async function handleDrop(e) { uploadDragOver.value = false; await uploadFiles(e.dataTransfer.files); }
+
+        async function uploadFiles(files) {
+            if (!files.length) return;
+            uploading.value = true;
+            uploadResults.value = [];
+            const formData = new FormData();
+            for (const f of files) formData.append('files', f);
+            try {
+                const res = await fetch(`${API}/api/batch-upload`, { method: 'POST', body: formData });
+                const data = await res.json();
+                uploadResults.value = data.images.map(img => ({ ...img, success: true }));
+                toast(`成功上传 ${data.success} 张图片`);
+                loadStats(); loadLibrary(1);
+            } catch (e) { toast('上传失败', 'error'); }
+            uploading.value = false;
+        }
+
+        const importFolderPath = ref('');
+        const importing = ref(false);
+        const importResult = ref(null);
+
+        async function importFolder() {
+            importing.value = true;
+            const formData = new FormData();
+            formData.append('folder_path', importFolderPath.value);
+            try {
+                const res = await fetch(`${API}/api/import-folder`, { method: 'POST', body: formData });
+                importResult.value = await res.json();
+                toast(`导入完成: 成功${importResult.value.success}张`);
+                loadStats(); loadLibrary(1);
+            } catch (e) { toast('导入失败', 'error'); }
+            importing.value = false;
+        }
+
+        // ===== 搜索 =====
+        const searchMode = ref('image');
+        const searchThreshold = ref(0.85);
+        const searchTopK = ref(20);
+        const searchText = ref('');
+        const searchPreview = ref(null);
+        const searchResults = ref([]);
+        const searching = ref(false);
+        const searchDragOver = ref(false);
+
+        function handleSearchFileSelect(e) { setSearchPreview(e.target.files[0]); }
+        function handleSearchDrop(e) { searchDragOver.value = false; setSearchPreview(e.dataTransfer.files[0]); }
+        function setSearchPreview(file) {
+            if (!file) return;
+            searchPreview.value = URL.createObjectURL(file);
+            searchPreview._file = file;
+        }
+
+        async function executeSearch() {
+            searching.value = true;
+            searchResults.value = [];
+            try {
+                const formData = new FormData();
+                formData.append('top_k', searchTopK.value);
+                formData.append('threshold', searchThreshold.value);
+
+                let url = '';
+                if (searchMode.value === 'image') {
+                    if (!searchPreview._file) { toast('请先选择搜索图片', 'error'); return; }
+                    formData.append('file', searchPreview._file);
+                    url = `${API}/api/search/image`;
+                } else {
+                    if (!searchText.value.trim()) { toast('请输入搜索文字', 'error'); return; }
+                    formData.append('text', searchText.value);
+                    url = `${API}/api/search/text`;
+                }
+
+                const res = await fetch(url, { method: 'POST', body: formData });
+                const data = await res.json();
+                searchResults.value = data.results || [];
+                toast(`找到 ${searchResults.value.length} 条结果`);
+            } catch (e) { toast('搜索失败', 'error'); }
+            searching.value = false;
+        }
+
+        // ===== 阈值对比 =====
+        const thresholdPreview = ref(null);
+        const thresholdList = ref('0.70,0.75,0.80,0.85,0.90,0.95');
+        const thresholdComparisons = ref([]);
+        const thresholdComparing = ref(false);
+
+        function handleThresholdFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) thresholdPreview.value = URL.createObjectURL(file);
+            thresholdPreview._file = file;
+        }
+
+        async function runThresholdCompare() {
+            if (!thresholdPreview._file) return;
+            thresholdComparing.value = true;
+            thresholdComparisons.value = [];
+            const formData = new FormData();
+            formData.append('file', thresholdPreview._file);
+            formData.append('thresholds', thresholdList.value);
+            try {
+                const res = await fetch(`${API}/api/threshold-compare`, { method: 'POST', body: formData });
+                const data = await res.json();
+                thresholdComparisons.value = data.comparisons || [];
+                toast('阈值对比完成');
+            } catch (e) { toast('对比失败', 'error'); }
+            thresholdComparing.value = false;
+        }
+
+        // ===== 重复组 =====
+        const groups = ref([]);
+        const detecting = ref(false);
+        const cleaning = ref(false);
+
+        async function loadGroups() {
+            try {
+                const res = await fetch(`${API}/api/groups`);
+                const data = await res.json();
+                groups.value = data.groups || [];
+            } catch (e) { /* silent */ }
+        }
+
+        async function detectDuplicates() {
+            detecting.value = true;
+            const formData = new FormData();
+            formData.append('threshold', 0.85);
+            try {
+                const res = await fetch(`${API}/api/detect-duplicates`, { method: 'POST', body: formData });
+                const data = await res.json();
+                toast(`检测完成: 发现 ${data.total_groups} 个重复组`);
+                loadGroups(); loadStats();
+            } catch (e) { toast('检测失败', 'error'); }
+            detecting.value = false;
+        }
+
+        async function autoCleanGroup(groupId) {
+            if (!confirm('确定要自动清理此重复组吗？将保留画质最高的图片，删除其余。')) return;
+            try {
+                const res = await fetch(`${API}/api/groups/${groupId}/auto-clean`, { method: 'POST' });
+                const data = await res.json();
+                toast(data.message);
+                loadGroups(); loadStats(); loadLibrary(1);
+            } catch (e) { toast('清理失败', 'error'); }
+        }
+
+        async function batchAutoClean() {
+            if (!confirm('确定要批量清理所有重复组吗？此操作不可撤销。')) return;
+            cleaning.value = true;
+            try {
+                const res = await fetch(`${API}/api/groups/batch-auto-clean`, { method: 'POST' });
+                const data = await res.json();
+                toast(data.message);
+                loadGroups(); loadStats(); loadLibrary(1);
+            } catch (e) { toast('批量清理失败', 'error'); }
+            cleaning.value = false;
+        }
+
+        async function deleteGroup(groupId) {
+            if (!confirm('确定删除此重复组？（不会删除图片文件）')) return;
+            try {
+                await fetch(`${API}/api/groups/${groupId}`, { method: 'DELETE' });
+                toast('重复组已删除');
+                loadGroups();
+            } catch (e) { toast('删除失败', 'error'); }
+        }
+
+        // ===== 导出 =====
+        const showExportModal = ref(false);
+
+        async function exportZip() {
+            const ids = [...selectedImages.value].join(',');
+            const formData = new FormData();
+            formData.append('image_ids', ids);
+            try {
+                const res = await fetch(`${API}/api/export`, { method: 'POST', body: formData });
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'exported_images.zip'; a.click();
+                URL.revokeObjectURL(url);
+                toast('导出成功');
+                showExportModal.value = false;
+            } catch (e) { toast('导出失败', 'error'); }
+        }
+
+        async function exportManifest() {
+            const ids = [...selectedImages.value].join(',');
+            const formData = new FormData();
+            formData.append('image_ids', ids);
+            try {
+                const res = await fetch(`${API}/api/export/manifest`, { method: 'POST', body: formData });
+                const data = await res.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'image_manifest.json'; a.click();
+                URL.revokeObjectURL(url);
+                toast('清单导出成功');
+                showExportModal.value = false;
+            } catch (e) { toast('导出失败', 'error'); }
+        }
+
+        // ===== 工具函数 =====
+        function getFilename(filepath) { return filepath.split(/[\\/]/).pop(); }
+        function formatSize(bytes) {
+            if (!bytes) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+        function getSimilarityColor(score) {
+            if (score >= 0.95) return 'text-red-500';
+            if (score >= 0.85) return 'text-amber-500';
+            return 'text-green-500';
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API}/api/library/stats`);
+                const data = await res.json();
+                Object.assign(stats, data);
+            } catch (e) { /* silent */ }
+        }
+
+        onMounted(() => {
+            loadStats();
+            loadLibrary(1);
+            loadGroups();
+        });
+
+        return {
+            currentTab, tabs, stats, toasts,
+            libraryImages, libraryPage, libraryTotalPages, libraryKeyword,
+            selectedImages, allSelected, loadLibrary, toggleSelect, selectAllVisible,
+            uploadDragOver, uploading, uploadResults, handleFileSelect, handleDrop,
+            importFolderPath, importing, importResult, importFolder,
+            searchMode, searchThreshold, searchTopK, searchText, searchPreview,
+            searchResults, searching, searchDragOver,
+            handleSearchFileSelect, handleSearchDrop, executeSearch,
+            thresholdPreview, thresholdList, thresholdComparisons, thresholdComparing,
+            handleThresholdFileSelect, runThresholdCompare,
+            groups, detecting, cleaning, loadGroups, detectDuplicates,
+            autoCleanGroup, batchAutoClean, deleteGroup,
+            showExportModal, exportZip, exportManifest,
+            getFilename, formatSize, getSimilarityColor
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>

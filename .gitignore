@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+venv/
+.env
+
+# 模型文件（太大，不适合GitHub）
+models/
+*.bin
+*.pt
+
+# 数据库和索引
+*.db
+*.db-shm
+*.db-wal
+faiss_index.bin
+faiss_id_map.json
+
+# 图片库（太大）
+image_library/
+
+# 上传临时文件
+uploads/
+test_uploads/
+
+# 测试脚本
+test_*.py
+upload_test.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

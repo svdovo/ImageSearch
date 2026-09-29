@@ -1,0 +1,26 @@
+# 图片素材库 - 以图搜图与去重系统 依赖
+
+# 核心依赖
+numpy
+Pillow
+imagehash
+fastapi
+uvicorn
+python-multipart
+tqdm
+six
+
+# 向量搜索
+faiss-cpu
+
+# 深度学习
+torch
+torchvision
+
+# Chinese-CLIP 依赖
+timm
+modelscope
+
+# 注意：Chinese-CLIP 需要从本地源码安装
+# 请确保 Chinese-CLIP-master 目录在上级目录，然后运行：
+# pip install ../Chinese-CLIP-master --no-deps
